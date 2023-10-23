@@ -1,3 +1,4 @@
+use crate::index::updater::xdns_sync::new_inscription_blocking;
 use {super::*, inscription::Curse};
 
 #[derive(Debug, Clone)]
@@ -43,6 +44,8 @@ pub(super) struct InscriptionUpdater<'a, 'db, 'tx> {
   timestamp: u32,
   pub(super) unbound_inscriptions: u64,
   value_cache: &'a mut HashMap<OutPoint, u64>,
+  current_tx: Option<Transaction>,
+  inscriptions_cache: HashMap<InscriptionId, Inscription>,
 }
 
 impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
@@ -101,6 +104,8 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
       timestamp,
       unbound_inscriptions,
       value_cache,
+      inscriptions_cache: HashMap::new(),
+      current_tx: None,
     })
   }
 
@@ -115,6 +120,8 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
     let mut inscribed_offsets = BTreeMap::new();
     let mut total_input_value = 0;
     let mut id_counter = 0;
+
+    self.current_tx = Some(tx.clone());
 
     for (input_index, tx_in) in tx.input.iter().enumerate() {
       // skip subsidy since no inscriptions possible
@@ -253,6 +260,10 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
             unbound,
           },
         });
+
+        self
+          .inscriptions_cache
+          .insert(inscription_id, inscription.payload.clone());
 
         envelopes.next();
         id_counter += 1;
@@ -514,6 +525,25 @@ impl<'a, 'db, 'tx> InscriptionUpdater<'a, 'db, 'tx> {
     } else {
       new_satpoint.store()
     };
+
+    let inscription = self.inscriptions_cache.get(&flotsam.inscription_id);
+
+    if let Some(transaction) = &self.current_tx {
+      let address = transaction
+        .output
+        .clone()
+        .into_iter()
+        .nth(new_satpoint.outpoint.vout.try_into().unwrap())
+        .and_then(|tx_out| {
+          Chain::Mainnet
+            .address_from_script(&tx_out.script_pubkey)
+            .ok()
+        });
+
+      new_inscription_blocking(&flotsam.inscription_id, inscription, address);
+    } else {
+      panic!("No current transaction!")
+    }
 
     self.satpoint_to_id.insert(&satpoint, &inscription_id)?;
     self.id_to_satpoint.insert(&inscription_id, &satpoint)?;

@@ -8,6 +8,7 @@ use {
 
 mod inscription_updater;
 mod rune_updater;
+mod xdns_sync;
 
 pub(crate) struct BlockData {
   pub(crate) header: Header,
